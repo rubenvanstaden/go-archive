@@ -17,16 +17,20 @@ func main() {
 	}
 	defer outFile.Close()
 
-	err = createTarAndGz("./examples/job2", outFile)
-
+	err = compress("./examples/job2", outFile)
 	if err != nil {
-		panic("Error creating archive file.")
+		panic("Error compressing archive")
+	}
+
+    err = uncompress("archive.tar.gz", "/tmp")
+	if err != nil {
+		panic("Error unpacking archive")
 	}
 
 	fmt.Println("Archiving and file compression completed.")
 }
 
-func createTarAndGz(src string, buffer io.Writer) error {
+func compress(src string, buffer io.Writer) error {
 
 	gzipWriter := gzip.NewWriter(buffer)
 	defer gzipWriter.Close()
@@ -63,4 +67,71 @@ func addToTar(tarWriter *tar.Writer) func(string, os.FileInfo, error) error {
         }
         return nil
     }
+}
+
+func uncompress(tarball, dst string) error {
+
+    reader, err := os.Open(tarball)
+    if err != nil {
+        return err
+    }
+    defer reader.Close()
+
+	// ungzip
+	zr, err := gzip.NewReader(reader)
+	if err != nil {
+		return err
+	}
+
+	// untar
+	tr := tar.NewReader(zr)
+
+	// uncompress each element
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break // End of archive
+		}
+		if err != nil {
+			return err
+		}
+		// target := 
+		//
+		// // validate name against path traversal
+		// if !validRelPath(header.Name) {
+		// 	return fmt.Errorf("tar contained invalid name error %q\n", target)
+		// }
+
+		// add dst + re-format slashes according to system
+        target := filepath.Join(dst, header.Name)
+		// if no join is needed, replace with ToSlash:
+		// target = filepath.ToSlash(header.Name)
+
+		// check the type
+		switch header.Typeflag {
+
+		// if its a dir and it doesn't exist create it (with 0755 permission)
+		case tar.TypeDir:
+			if _, err := os.Stat(target); err != nil {
+				if err := os.MkdirAll(target, 0755); err != nil {
+					return err
+				}
+			}
+		// if it's a file create it (with same permission)
+		case tar.TypeReg:
+			fileToWrite, err := os.OpenFile(target, os.O_CREATE|os.O_RDWR, os.FileMode(header.Mode))
+			if err != nil {
+				return err
+			}
+			// copy over contents
+			if _, err := io.Copy(fileToWrite, tr); err != nil {
+				return err
+			}
+			// manually close here after each file operation; defering would cause each file close
+			// to wait until all operations have completed.
+			fileToWrite.Close()
+		}
+	}
+
+    return nil
 }
